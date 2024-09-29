@@ -64,6 +64,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "square_customers_api_fdw"
+version = "1.2.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -79,14 +87,6 @@ name = "unicode-ident"
 version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
-
-[[package]]
-name = "wasm_fdw_example"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen-rt",
-]
 
 [[package]]
 name = "wit-bindgen-rt"
