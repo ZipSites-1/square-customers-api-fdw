@@ -22,12 +22,12 @@ struct ExampleFdw {
     access_token: String, // Store access token for reuse
 }
 
-// pointer for the static FDW instance
+// Pointer for the static FDW instance
 static mut INSTANCE: *mut ExampleFdw = std::ptr::null_mut::<ExampleFdw>();
 static INIT: Once = Once::new();
 
 impl ExampleFdw {
-    // initialise FDW instance
+    // Initialize FDW instance
     fn init_instance() {
         let instance = Self::default();
         unsafe {
@@ -42,8 +42,8 @@ impl ExampleFdw {
 
 impl Guest for ExampleFdw {
     fn host_version_requirement() -> String {
-        // semver expression for Wasm FDW host version requirement
-        // ref: https://docs.rs/semver/latest/semver/enum.Op.html
+        // Semver expression for Wasm FDW host version requirement
+        // Ref: https://docs.rs/semver/latest/semver/enum.Op.html
         "^0.1.0".to_string()
     }
 
@@ -67,15 +67,15 @@ impl Guest for ExampleFdw {
         // Fetch options from the server context
         let opts = ctx.get_options(OptionsType::Server);
 
-        // Fetch the Square API URL and access token from options
+        // Fetch the API URL and access token from options
         this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
         this.access_token = opts.require_or("access_token", "your_default_token");
 
         // Log the base URL without exposing the access token
-        utils::report_info(&format!("Using Square API base URL: {}", this.base_url));
+        utils::report_info(&format!("Using API base URL: {}", this.base_url));
         utils::report_info(&format!(
             "Access token received: {}****",
-            &this.access_token[..5]
+            &this.access_token[..5.min(this.access_token.len())] // Prevents panic if token is shorter
         )); // Masking for security
 
         Ok(())
@@ -116,14 +116,14 @@ impl Guest for ExampleFdw {
             .ok_or("Expected 'customers' field with an array in the response".to_owned())?;
 
         utils::report_info(&format!(
-            "Retrieved {} customers from Square API",
+            "Retrieved {} customers from API",
             this.src_rows.len()
         ));
 
         Ok(())
     }
 
-    fn iter_scan(ctx: &Context, row: &mut Row) -> Result<Option<u32>, FdwError> { // Changed to &mut Row
+    fn iter_scan(ctx: &Context, row: &Row) -> Result<Option<u32>, FdwError> {
         let this = Self::this_mut();
 
         if this.src_idx >= this.src_rows.len() {
@@ -159,15 +159,19 @@ impl Guest for ExampleFdw {
             };
 
             if let Some(c) = cell {
-                row.push(&c);
+                row.push(Some(&c)); // Wrapped in Some as per expected type
             } else {
-                return Err(format!("Unsupported data type for column '{}'", tgt_col_name).into());
+                return Err(format!(
+                    "Unsupported data type for column '{}'",
+                    tgt_col_name
+                )
+                .into());
             }
         }
 
         this.src_idx += 1;
 
-        Ok(Some(0))
+        Ok(Some(0)) // Assuming 0 is an appropriate return value
     }
 
     fn re_scan(_ctx: &Context) -> FdwResult {
@@ -177,7 +181,7 @@ impl Guest for ExampleFdw {
     fn end_scan(_ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
         this.src_rows.clear();
-        this.src_idx = 0; // Reset index
+        this.src_idx = 0; // Reset index for potential future scans
         Ok(())
     }
 
@@ -203,4 +207,5 @@ impl Guest for ExampleFdw {
 }
 
 bindings::export!(ExampleFdw with_types_in bindings);
+
 
