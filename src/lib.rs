@@ -83,45 +83,95 @@ impl Guest for ExampleFdw {
 
     fn begin_scan(ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
-
+    
         let opts = ctx.get_options(OptionsType::Table);
         let object = opts.require("object")?;
-        let url = format!("{}/{}", this.base_url, object);
-
-        // Corrected header names to lowercase and included authorization
+        let mut url = format!("{}/{}", this.base_url, object);
+    
         let headers: Vec<(String, String)> = vec![
             ("authorization".to_owned(), format!("Bearer {}", this.access_token)),
             ("content-type".to_owned(), "application/json".to_owned()),
             ("user-agent".to_owned(), "SquareCustomers FDW".to_owned()),
         ];
-
-        let req = http::Request {
-            method: http::Method::Get,
-            url,
-            headers,
-            body: String::default(),
-        };
-
-        let resp = http::get(&req).map_err(|e| {
-            error!("HTTP request failed: {}", e);
-            e.to_string()
-        })?;
-        let resp_json: JsonValue =
-            serde_json::from_str(&resp.body).map_err(|e| format!("JSON parsing error: {}", e))?;
-
-        this.src_rows = resp_json
-            .get("customers")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .ok_or("Expected 'customers' field with an array in the response".to_owned())?;
-
+    
+        let mut all_customers = Vec::new(); // Vector to store all customers across pages
+        let mut cursor: Option<String> = None;
+    
+        loop {
+            let req = http::Request {
+                method: http::Method::Get,
+                url: if let Some(ref c) = cursor {
+                    format!("{}?cursor={}", url, c) // Append cursor to URL if it exists
+                } else {
+                    url.clone() // First request, no cursor
+                },
+                headers: headers.clone(),
+                body: String::default(),
+            };
+    
+            // Make the API request
+            let resp = http::get(&req).map_err(|e| {
+                error!("HTTP request failed: {}", e);
+                e.to_string()
+            })?;
+    
+            // Check if the status code is 200 (OK)
+            if resp.status_code != 200 {
+                error!("Non-200 response received: {}", resp.status_code);
+                return Err(format!("Non-200 response received: {}", resp.status_code).into());
+            }
+    
+            // Parse the JSON response body
+            let resp_json: JsonValue =
+                serde_json::from_str(&resp.body).map_err(|e| format!("JSON parsing error: {}", e))?;
+    
+            // Extract the 'customers' field from the response, expect it to be an array
+            let customers = match resp_json.get("customers").and_then(|v| v.as_array()) {
+                Some(array) => array.clone(),
+                None => {
+                    error!(
+                        "Expected 'customers' field with an array in the response, but got: {:?}",
+                        resp_json
+                    );
+                    return Err("Expected 'customers' field with an array in the response".into());
+                }
+            };
+    
+            // Add the current page of customers to the full list
+            all_customers.extend(customers);
+    
+            // Log the number of customers retrieved so far
+            utils::report_info(&format!(
+                "Retrieved {} customers so far",
+                all_customers.len()
+            ));
+    
+            // Check if a pagination cursor exists in the response
+            cursor = resp_json.get("cursor").and_then(|v| v.as_str().map(|s| s.to_owned()));
+    
+            if cursor.is_none() {
+                // If no cursor is found, it means there are no more pages, so we break the loop
+                break;
+            } else {
+                utils::report_info(&format!(
+                    "More customers available, continuing with cursor: {}",
+                    cursor.as_ref().unwrap()
+                ));
+            }
+        }
+    
+        // Assign all the customers retrieved to the source rows for iteration
+        this.src_rows = all_customers;
+    
+        // Log the total number of customers fetched
         utils::report_info(&format!(
-            "Retrieved {} customers from API",
+            "Total customers retrieved from API: {}",
             this.src_rows.len()
         ));
-
+    
         Ok(())
     }
+    
 
     fn iter_scan(ctx: &Context, row: &Row) -> Result<Option<u32>, FdwError> {
         let this = Self::this_mut();
