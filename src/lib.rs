@@ -42,27 +42,25 @@ impl Guest for ExampleFdw {
         "^0.1.0".to_string()
     }
 
-
     fn init(ctx: &Context) -> FdwResult {
         Self::init_instance();
         let this = Self::this_mut();
 
         let opts = ctx.get_options(OptionsType::Server);
-        this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
+        this.base_url = opts.require_or("api_url", "https://api.github.com");
 
         Ok(())
     }
 
     fn begin_scan(ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
-        let access_token = ctx.get_options(OptionsType::Server).require("access_token")?;
 
-        let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", access_token)),
-            ("user-agent".to_owned(), "Example FDW".to_owned())
-        ];
+        let opts = ctx.get_options(OptionsType::Table);
+        let object = opts.require("object")?;
+        let url = format!("{}/{}", this.base_url, object);
 
-        let url = format!("{}/{}", this.base_url, "customers");
+        let headers: Vec<(String, String)> =
+            vec![("user-agent".to_owned(), "Example FDW".to_owned())];
 
         let req = http::Request {
             method: http::Method::Get,
@@ -82,7 +80,6 @@ impl Guest for ExampleFdw {
 
         Ok(())
     }
-    
 
     fn iter_scan(ctx: &Context, row: &Row) -> Result<Option<u32>, FdwError> {
         let this = Self::this_mut();
@@ -137,72 +134,18 @@ impl Guest for ExampleFdw {
     }
 
     fn begin_modify(_ctx: &Context) -> FdwResult {
+        Err("modify on foreign table is not supported".to_owned())
+    }
+
+    fn insert(_ctx: &Context, _row: &Row) -> FdwResult {
         Ok(())
     }
 
-    fn insert(ctx: &Context, row: &Row) -> FdwResult {
-        let this = Self::this_mut();
-        let url = format!("{}/{}", this.base_url, "customers");
-        let body = serde_json::to_string(row)?; // Ensure row is appropriately serialized to JSON
-
-        let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", ctx.get_options(OptionsType::Server).require("access_token")?)),
-            ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("user-agent".to_owned(), "Example FDW".to_owned())
-        ];
-
-        let req = http::Request {
-            method: http::Method::Post,
-            url,
-            headers,
-            body,
-        };
-
-        http::post(&req)?;
+    fn update(_ctx: &Context, _rowid: Cell, _row: &Row) -> FdwResult {
         Ok(())
     }
 
-    fn update(ctx: &Context, rowid: Cell, row: &Row) -> FdwResult {
-        let this = Self::this_mut();
-        let customer_id = rowid.as_str().ok_or("Missing customer ID")?;
-        let url = format!("{}/{}/{}", this.base_url, "customers", customer_id);
-        let body = serde_json::to_string(row)?;
-
-        let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", ctx.get_options(OptionsType::Server).require("access_token")?)),
-            ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("user-agent".to_owned(), "Example FDW".to_owned())
-        ];
-
-        let req = http::Request {
-            method: http::Method::Put,
-            url,
-            headers,
-            body,
-        };
-
-        http::put(&req)?;
-        Ok(())
-    }
-
-    fn delete(ctx: &Context, rowid: Cell) -> FdwResult {
-        let this = Self::this_mut();
-        let customer_id = rowid.as_str().ok_or("Missing customer ID")?;
-        let url = format!("{}/{}/{}", this.base_url, "customers", customer_id);
-
-        let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", ctx.get_options(OptionsType::Server).require("access_token")?)),
-            ("user-agent".to_owned(), "Example FDW".to_owned())
-        ];
-
-        let req = http::Request {
-            method: http::Method::Delete,
-            url,
-            headers,
-            body: String::default(),
-        };
-
-        http::delete(&req)?;
+    fn delete(_ctx: &Context, _rowid: Cell) -> FdwResult {
         Ok(())
     }
 
