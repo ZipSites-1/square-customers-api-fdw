@@ -57,69 +57,65 @@ impl Guest for ExampleFdw {
 
         // Save the access token into the FDW instance for later use
         utils::report_info(&format!("Using Square API base URL: {}", this.base_url));
-        utils::report_info(&format!("Using provided access token: {}", access_token));
-
+        utils::report_info(&format!(
+            "Access token received: {}****",
+            &this.access_token[..5]
+        ));
+        
         Ok(())
     }
 
-    fn begin_scan(ctx: &Context) -> FdwResult {
-        let this = Self::this_mut();
-    
-        // Retrieve the options from the Table context
-        let opts = ctx.get_options(OptionsType::Table);
-        let object = opts.require("object")?;
-    
-        // Construct the URL for the API request (Square's Customers endpoint)
-        let url = format!("{}/{}", this.base_url, object);
-    
-        // Fetch the access_token from the server options (retrieved in init)
-        let opts_server = ctx.get_options(OptionsType::Server);
-        let access_token = opts_server.require_or("access_token", "your_default_token");
-        
-        info!("Using Square API base URL: {}", this.base_url);
-        debug!("Authorization header: Bearer {}", access_token);
+    use log::{info, debug};  // Removed 'error' since it is not used
 
-        // Check if access token is valid
-        if access_token.is_empty() {
-            return Err("Access token is missing or invalid".to_string());
-        }
-    
-        // Set up the request headers, including the Authorization with the Bearer token
-        let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", access_token))
-                .map_err(|e| format!("Invalid Authorization header: {}", e))?,
-            ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned())
-        ];
-        
-    
-        // Create the HTTP GET request to the Square API
-        let req = http::Request {
-            method: http::Method::Get,
-            url,
-            headers,
-            body: String::default(),
-        };
-    
-        // Execute the HTTP request and handle the response
-        let resp = http::get(&req).map_err(|e| format!("HTTP request failed: {}", e))?;
-    
-        // Parse the response body as JSON
-        let resp_json: JsonValue = serde_json::from_str(&resp.body)
-            .map_err(|e| format!("Failed to parse response: {}", e))?;
-    
-        // Ensure the response contains an array of customers
-        this.src_rows = resp_json
-            .get("customers")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .ok_or("Expected 'customers' field with an array in the response")?;
-    
-        // Log the number of customers retrieved
-        utils::report_info(&format!("Retrieved {} customers from Square API", this.src_rows.len()));
-    
-        Ok(())
-    }
+fn begin_scan(ctx: &Context) -> FdwResult {
+    let this = Self::this_mut();
+
+    // Retrieve the options from the Table context
+    let opts = ctx.get_options(OptionsType::Table);
+    let object = opts.require("object")?;
+
+    // Construct the URL for the API request (Square's Customers endpoint)
+    let url = format!("{}/{}", this.base_url, object);
+
+    // Fetch the access_token from the server options (retrieved in init)
+    let opts_server = ctx.get_options(OptionsType::Server);
+    let access_token = opts_server.require_or("access_token", "your_default_token");
+
+     // Corrected header names to lowercase and included authorization
+     let headers: Vec<(String, String)> = vec![
+        ("authorization".to_owned(), format!("Bearer {}", this.access_token)),
+        ("content-type".to_owned(), "application/json".to_owned()),
+        ("user-agent".to_owned(), "SquareCustomers FDW".to_owned()),
+    ];
+
+    // Create the HTTP GET request to the Square API
+    let req = http::Request {
+        method: http::Method::Get,
+        url,
+        headers,
+        body: String::default(),
+    };
+
+    // Execute the HTTP request and handle the response
+    let resp = http::get(&req).map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    // Parse the response body as JSON
+    let resp_json: JsonValue = serde_json::from_str(&resp.body)
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    // Ensure the response contains an array of customers
+    this.src_rows = resp_json
+        .get("customers")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .ok_or("Expected 'customers' field with an array in the response")?;
+
+    // Log the number of customers retrieved
+    utils::report_info(&format!("Retrieved {} customers from Square API", this.src_rows.len()));
+
+    Ok(())
+}
+
     
     
     
