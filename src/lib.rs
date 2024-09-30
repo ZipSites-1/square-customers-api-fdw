@@ -14,9 +14,11 @@ use bindings::{
 #[derive(Debug, Default)]
 struct ExampleFdw {
     base_url: String,
+    access_token: String, // Store the OAuth 2.0 access token
     src_rows: Vec<JsonValue>,
     src_idx: usize,
 }
+
 
 // pointer for the static FDW instance
 static mut INSTANCE: *mut ExampleFdw = std::ptr::null_mut::<ExampleFdw>();
@@ -45,41 +47,52 @@ impl Guest for ExampleFdw {
     fn init(ctx: &Context) -> FdwResult {
         Self::init_instance();
         let this = Self::this_mut();
-
+    
+        // Retrieve the API base URL and access_token from the server options
         let opts = ctx.get_options(OptionsType::Server);
-        this.base_url = opts.require_or("api_url", "https://api.github.com");
-
+        this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
+    
+        // Retrieve the access_token for Square API OAuth authentication
+        this.access_token = opts.require("access_token")
+            .map_err(|e| format!("Missing access_token option: {}", e))?;
+    
         Ok(())
     }
+    
 
     fn begin_scan(ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
-
+    
         let opts = ctx.get_options(OptionsType::Table);
         let object = opts.require("object")?;
         let url = format!("{}/{}", this.base_url, object);
-
-        let headers: Vec<(String, String)> =
-            vec![("user-agent".to_owned(), "Example FDW".to_owned())];
-
+    
+        // Add Bearer Token Authorization header for Square API OAuth authentication
+        let headers: Vec<(String, String)> = vec![
+            ("user-agent".to_owned(), "Example FDW".to_owned()),
+            ("Authorization".to_owned(), format!("Bearer {}", this.access_token)), // Use access_token
+        ];
+    
         let req = http::Request {
             method: http::Method::Get,
             url,
             headers,
             body: String::default(),
         };
+    
         let resp = http::get(&req)?;
         let resp_json: JsonValue = serde_json::from_str(&resp.body).map_err(|e| e.to_string())?;
-
+    
         this.src_rows = resp_json
             .as_array()
             .map(|v| v.to_owned())
             .expect("response should be a JSON array");
-
+    
         utils::report_info(&format!("We got response array length: {}", this.src_rows.len()));
-
+    
         Ok(())
     }
+    
 
     fn iter_scan(ctx: &Context, row: &Row) -> Result<Option<u32>, FdwError> {
         let this = Self::this_mut();
