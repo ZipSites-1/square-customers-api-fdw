@@ -71,15 +71,18 @@ impl Guest for ExampleFdw {
         // Fetch the access_token from the server options (retrieved in init)
         let opts_server = ctx.get_options(OptionsType::Server);
         let access_token = opts_server.require_or("access_token", "your_default_token");
+        
+        // Check if access token is valid
+        if access_token.is_empty() {
+            return Err("Access token is missing or invalid".to_string());
+        }
     
         // Set up the request headers, including the Authorization with the Bearer token
         let headers: Vec<(String, String)> = vec![
             ("Authorization".to_owned(), format!("Bearer {}", access_token)),
             ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned())
+            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned()) // Correct case for User-Agent
         ];
-        
-
     
         // Create the HTTP GET request to the Square API
         let req = http::Request {
@@ -90,7 +93,9 @@ impl Guest for ExampleFdw {
         };
     
         // Execute the HTTP request and handle the response
-        let resp = http::get(&req)?;
+        let resp = http::get(&req).map_err(|e| format!("HTTP request failed: {}", e))?;
+    
+        // Parse the response body as JSON
         let resp_json: JsonValue = serde_json::from_str(&resp.body)
             .map_err(|e| format!("Failed to parse response: {}", e))?;
     
@@ -106,6 +111,7 @@ impl Guest for ExampleFdw {
     
         Ok(())
     }
+    
     
     
 
