@@ -76,8 +76,10 @@ impl Guest for ExampleFdw {
         let headers: Vec<(String, String)> = vec![
             ("Authorization".to_owned(), format!("Bearer {}", access_token)),
             ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("user-agent".to_owned(), "SquareCustomers FDW".to_owned())
+            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned())
         ];
+        
+
     
         // Create the HTTP GET request to the Square API
         let req = http::Request {
