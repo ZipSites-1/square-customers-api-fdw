@@ -10,8 +10,8 @@ use bindings::{
         utils,
     },
 };
-use env_logger;
-use log::{info, error, debug};
+// use env_logger;
+// use log::{info, error, debug};
 use std::sync::Once;
 
 #[derive(Debug, Default)]
@@ -54,34 +54,25 @@ impl Guest for ExampleFdw {
         });
         let this = Self::this_mut();
 
-        // Initialize logger safely
-        if let Err(e) = env_logger::try_init() {
-            // Logger was already initialized
-            debug!("Logger initialization skipped: {}", e);
-        } else {
-            info!("Logger initialized successfully.");
-        }
+           // Fetch options from the server context
+           let opts = ctx.get_options(OptionsType::Server);
 
-        info!("Initializing FDW...");
+           // Fetch the API URL and access token from options
+           this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
+           this.access_token = opts.require_or("access_token", "your_default_token");
+   
+           // Log the base URL without exposing the access token (use utils::report_info instead)
+           utils::report_info(&format!("Using API base URL: {}", this.base_url));
+           utils::report_info(&format!(
+               "Access token received: {}****",
+               &this.access_token[..5.min(this.access_token.len())] // Prevents panic if token is shorter
+           )); // Masking for security
+   
+           Ok(())
+       }
+   
 
-        // Fetch options from the server context
-        let opts = ctx.get_options(OptionsType::Server);
-
-        // Fetch the API URL and access token from options
-        this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
-        this.access_token = opts.require_or("access_token", "your_default_token");
-
-        // Log the base URL without exposing the access token
-        utils::report_info(&format!("Using API base URL: {}", this.base_url));
-        utils::report_info(&format!(
-            "Access token received: {}****",
-            &this.access_token[..5.min(this.access_token.len())] // Prevents panic if token is shorter
-        )); // Masking for security
-
-        Ok(())
-    }
-
-    fn begin_scan(ctx: &Context) -> FdwResult {
+       fn begin_scan(ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
     
         let opts = ctx.get_options(OptionsType::Table);
@@ -111,13 +102,13 @@ impl Guest for ExampleFdw {
     
             // Make the API request
             let resp = http::get(&req).map_err(|e| {
-                error!("HTTP request failed: {}", e);
+                // error!("HTTP request failed: {}", e);
                 e.to_string()
             })?;
     
             // Check if the status code is 200 (OK)
             if resp.status_code != 200 {
-                error!("Non-200 response received: {}", resp.status_code);
+                // error!("Non-200 response received: {}", resp.status_code);
                 return Err(format!("Non-200 response received: {}", resp.status_code).into());
             }
     
@@ -129,10 +120,7 @@ impl Guest for ExampleFdw {
             let customers = match resp_json.get("customers").and_then(|v| v.as_array()) {
                 Some(array) => array.clone(),
                 None => {
-                    error!(
-                        "Expected 'customers' field with an array in the response, but got: {:?}",
-                        resp_json
-                    );
+                   
                     return Err("Expected 'customers' field with an array in the response".into());
                 }
             };
@@ -140,7 +128,7 @@ impl Guest for ExampleFdw {
             // Add the current page of customers to the full list
             all_customers.extend(customers);
     
-            // Log the number of customers retrieved so far
+            // Log the number of customers retrieved so far (use utils::report_info instead)
             utils::report_info(&format!(
                 "Retrieved {} customers so far",
                 all_customers.len()
