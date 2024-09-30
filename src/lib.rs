@@ -10,6 +10,8 @@ use bindings::{
         utils,
     },
 };
+use env_logger;
+use log::{info, error, debug};
 
 #[derive(Debug, Default)]
 struct ExampleFdw {
@@ -43,6 +45,8 @@ impl Guest for ExampleFdw {
     fn init(ctx: &Context) -> FdwResult {
         Self::init_instance();
         let this = Self::this_mut();
+        env_logger::init(); // Initialize logger
+        info!("Initializing FDW...");
 
         // Fetch options from the server context
         let opts = ctx.get_options(OptionsType::Server);
@@ -72,6 +76,9 @@ impl Guest for ExampleFdw {
         let opts_server = ctx.get_options(OptionsType::Server);
         let access_token = opts_server.require_or("access_token", "your_default_token");
         
+        info!("Using Square API base URL: {}", this.base_url);
+        debug!("Authorization header: Bearer {}", access_token);
+
         // Check if access token is valid
         if access_token.is_empty() {
             return Err("Access token is missing or invalid".to_string());
@@ -79,10 +86,12 @@ impl Guest for ExampleFdw {
     
         // Set up the request headers, including the Authorization with the Bearer token
         let headers: Vec<(String, String)> = vec![
-            ("Authorization".to_owned(), format!("Bearer {}", access_token)),
+            ("Authorization".to_owned(), format!("Bearer {}", access_token))
+                .map_err(|e| format!("Invalid Authorization header: {}", e))?,
             ("Content-Type".to_owned(), "application/json".to_owned()),
-            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned()) // Correct case for User-Agent
+            ("User-Agent".to_owned(), "SquareCustomers FDW".to_owned())
         ];
+        
     
         // Create the HTTP GET request to the Square API
         let req = http::Request {
