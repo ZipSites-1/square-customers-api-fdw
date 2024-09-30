@@ -1,4 +1,4 @@
-package my-company:square-customers-api-fdw@1.1.6;
+package my-company:square-customers-api-fdw@1.1.7;
 
 world example {
     import supabase:wrappers/http@0.1.0;

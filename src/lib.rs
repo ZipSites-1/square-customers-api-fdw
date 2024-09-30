@@ -10,21 +10,17 @@ use bindings::{
         utils,
     },
 };
-// use env_logger;
-// use log::{info, error, debug};
-use std::sync::Once;
 
 #[derive(Debug, Default)]
 struct ExampleFdw {
     base_url: String,
     src_rows: Vec<JsonValue>,
     src_idx: usize,
-    access_token: String, // Store access token for reuse
+    access_token: String, // Add an access token field for Square API
 }
 
 // Pointer for the static FDW instance
 static mut INSTANCE: *mut ExampleFdw = std::ptr::null_mut::<ExampleFdw>();
-static INIT: Once = Once::new();
 
 impl ExampleFdw {
     // Initialize FDW instance
@@ -43,173 +39,100 @@ impl ExampleFdw {
 impl Guest for ExampleFdw {
     fn host_version_requirement() -> String {
         // Semver expression for Wasm FDW host version requirement
-        // Ref: https://docs.rs/semver/latest/semver/enum.Op.html
         "^0.1.0".to_string()
     }
 
     fn init(ctx: &Context) -> FdwResult {
-        // Ensure initialization happens only once
-        INIT.call_once(|| {
-            Self::init_instance();
-        });
+        Self::init_instance();
         let this = Self::this_mut();
 
-           // Fetch options from the server context
-           let opts = ctx.get_options(OptionsType::Server);
+        // Get API URL and Access Token from foreign server options
+        let opts = ctx.get_options(OptionsType::Server);
+        this.base_url = opts.require_or("base_url", "https://connect.squareup.com/v2/customers");
+        this.access_token = opts.require("access_token")?; // Fetch the access token for Square API
 
-           // Fetch the API URL and access token from options
-           this.base_url = opts.require_or("api_url", "https://connect.squareup.com/v2/customers");
-           this.access_token = opts.require_or("access_token", "your_default_token");
-   
-           // Log the base URL without exposing the access token (use utils::report_info instead)
-           utils::report_info(&format!("Using API base URL: {}", this.base_url));
-           utils::report_info(&format!(
-               "Access token received: {}****",
-               &this.access_token[..5.min(this.access_token.len())] // Prevents panic if token is shorter
-           )); // Masking for security
-   
-           Ok(())
-       }
-   
+        Ok(())
+    }
 
-       fn begin_scan(ctx: &Context) -> FdwResult {
+    fn begin_scan(ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
-    
+
+        // Prepare URL for Square Customers API (no sheet_id, just customers)
         let opts = ctx.get_options(OptionsType::Table);
-        let object = opts.require("object")?;
-        let mut url = format!("{}/{}", this.base_url, object);
-    
+        let url = format!("{}", this.base_url); // Square API endpoint already includes '/customers'
+
+        // Prepare the headers required for Square API (authorization)
         let headers: Vec<(String, String)> = vec![
             ("authorization".to_owned(), format!("Bearer {}", this.access_token)),
             ("content-type".to_owned(), "application/json".to_owned()),
             ("user-agent".to_owned(), "SquareCustomers FDW".to_owned()),
         ];
-    
-        let mut all_customers = Vec::new(); // Vector to store all customers across pages
-        let mut cursor: Option<String> = None;
-    
-        loop {
-            let req = http::Request {
-                method: http::Method::Get,
-                url: if let Some(ref c) = cursor {
-                    format!("{}?cursor={}", url, c) // Append cursor to URL if it exists
-                } else {
-                    url.clone() // First request, no cursor
-                },
-                headers: headers.clone(),
-                body: String::default(),
-            };
-    
-            // Make the API request
-            let resp = http::get(&req).map_err(|e| {
-                // error!("HTTP request failed: {}", e);
-                e.to_string()
-            })?;
-    
-            // Check if the status code is 200 (OK)
-            if resp.status_code != 200 {
-                // error!("Non-200 response received: {}", resp.status_code);
-                return Err(format!("Non-200 response received: {}", resp.status_code).into());
-            }
-    
-            // Parse the JSON response body
-            let resp_json: JsonValue =
-                serde_json::from_str(&resp.body).map_err(|e| format!("JSON parsing error: {}", e))?;
-    
-            // Extract the 'customers' field from the response, expect it to be an array
-            let customers = match resp_json.get("customers").and_then(|v| v.as_array()) {
-                Some(array) => array.clone(),
-                None => {
-                   
-                    return Err("Expected 'customers' field with an array in the response".into());
-                }
-            };
-    
-            // Add the current page of customers to the full list
-            all_customers.extend(customers);
-    
-            // Log the number of customers retrieved so far (use utils::report_info instead)
-            utils::report_info(&format!(
-                "Retrieved {} customers so far",
-                all_customers.len()
-            ));
-    
-            // Check if a pagination cursor exists in the response
-            cursor = resp_json.get("cursor").and_then(|v| v.as_str().map(|s| s.to_owned()));
-    
-            if cursor.is_none() {
-                // If no cursor is found, it means there are no more pages, so we break the loop
-                break;
-            } else {
-                utils::report_info(&format!(
-                    "More customers available, continuing with cursor: {}",
-                    cursor.as_ref().unwrap()
-                ));
-            }
-        }
-    
-        // Assign all the customers retrieved to the source rows for iteration
-        this.src_rows = all_customers;
-    
-        // Log the total number of customers fetched
+
+        // Make a request to Square API and parse response as JSON
+        let req = http::Request {
+            method: http::Method::Get,
+            url,
+            headers,
+            body: String::default(),
+        };
+
+        let resp = http::get(&req)?;
+
+        // Parse the JSON response body
+        let resp_json: JsonValue = serde_json::from_str(&resp.body).map_err(|e| e.to_string())?;
+
+        // Extract customers from response
+        this.src_rows = resp_json
+            .get("customers")
+            .ok_or("cannot find 'customers' field in the response")?
+            .as_array()
+            .ok_or("customers field is not an array")?
+            .to_owned();
+
+        // Output a Postgres INFO to user (visible in psql), also useful for debugging
         utils::report_info(&format!(
-            "Total customers retrieved from API: {}",
+            "Retrieved {} customers from Square API.",
             this.src_rows.len()
         ));
-    
+
         Ok(())
     }
-    
 
     fn iter_scan(ctx: &Context, row: &Row) -> Result<Option<u32>, FdwError> {
         let this = Self::this_mut();
 
+        // If all source rows are consumed, stop data scan
         if this.src_idx >= this.src_rows.len() {
             return Ok(None);
         }
 
+        // Extract current customer row
         let src_row = &this.src_rows[this.src_idx];
+
+        // Map Square API fields to target columns
         for tgt_col in ctx.get_columns() {
             let tgt_col_name = tgt_col.name();
-            let src = src_row
-                .as_object()
-                .and_then(|v| v.get(&tgt_col_name))
-                .ok_or(format!("source column '{}' not found", tgt_col_name))?;
+            let src_value = src_row.get(tgt_col_name); // Match JSON field names with column names
+
             let cell = match tgt_col.type_oid() {
-                TypeOid::Bool => src.as_bool().map(Cell::Bool),
-                TypeOid::String => src.as_str().map(|v| Cell::String(v.to_owned())),
-                TypeOid::Timestamp => {
-                    if let Some(s) = src.as_str() {
-                        let ts = time::parse_from_rfc3339(s)?;
-                        Some(Cell::Timestamp(ts))
-                    } else {
-                        None
-                    }
-                }
-                TypeOid::Json => src.as_object().map(|_| Cell::Json(src.to_string())),
-                _ => {
-                    return Err(format!(
-                        "column '{}' data type is not supported",
-                        tgt_col_name
-                    )
-                    .into());
-                }
+                TypeOid::String => src_value.and_then(|v| v.as_str()).map(|v| Cell::String(v.to_owned())),
+                TypeOid::I64 => src_value.and_then(|v| v.as_i64()).map(Cell::I64),
+                TypeOid::Timestamp => src_value.and_then(|v| v.as_str()).and_then(|v| {
+                    // Parse timestamp from string format
+                    time::parse_from_rfc3339(v).ok().map(Cell::Timestamp)
+                }),
+                _ => return Err(format!("Column {} data type is not supported", tgt_col_name).into()),
             };
 
-            if let Some(c) = cell {
-                row.push(Some(&c)); // Wrapped in Some as per expected type
-            } else {
-                return Err(format!(
-                    "Unsupported data type for column '{}'",
-                    tgt_col_name
-                )
-                .into());
-            }
+            // Push the cell to target row
+            row.push(cell.as_ref());
         }
 
+        // Advance to next source row
         this.src_idx += 1;
 
-        Ok(Some(0)) // Assuming 0 is an appropriate return value
+        // Tell Postgres we've done one row, and need to scan the next row
+        Ok(Some(0))
     }
 
     fn re_scan(_ctx: &Context) -> FdwResult {
@@ -219,7 +142,6 @@ impl Guest for ExampleFdw {
     fn end_scan(_ctx: &Context) -> FdwResult {
         let this = Self::this_mut();
         this.src_rows.clear();
-        this.src_idx = 0; // Reset index for potential future scans
         Ok(())
     }
 
@@ -228,15 +150,15 @@ impl Guest for ExampleFdw {
     }
 
     fn insert(_ctx: &Context, _row: &Row) -> FdwResult {
-        Err("insert operation is not supported".to_owned())
+        Ok(())
     }
 
     fn update(_ctx: &Context, _rowid: Cell, _row: &Row) -> FdwResult {
-        Err("update operation is not supported".to_owned())
+        Ok(())
     }
 
     fn delete(_ctx: &Context, _rowid: Cell) -> FdwResult {
-        Err("delete operation is not supported".to_owned())
+        Ok(())
     }
 
     fn end_modify(_ctx: &Context) -> FdwResult {
@@ -245,5 +167,6 @@ impl Guest for ExampleFdw {
 }
 
 bindings::export!(ExampleFdw with_types_in bindings);
+
 
 
